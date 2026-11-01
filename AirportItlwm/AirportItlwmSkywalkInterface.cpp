@@ -7,6 +7,10 @@
 //
 #include "AirportItlwmV2.hpp"
 #include "AirportItlwmSkywalkInterface.hpp"
+struct apple80211_pmk_cache_data;
+struct packet_info_tx;
+#define _IO80211INTERFACE_H
+#include "IO80211VirtualInterface.h"
 #include <sys/CTimeout.hpp>
 #include <libkern/c++/OSMetaClass.h>
 #include <crypto/sha1.h>
@@ -1076,3 +1080,100 @@ IOReturn AirportItlwmSkywalkInterface::getHW_ADDR(apple80211_hw_mac_address *)
     return kIOReturnUnsupported;
 }
 #endif
+
+IOReturn AirportItlwmSkywalkInterface::setVIRTUAL_IF_CREATE(apple80211_virt_if_create_data *data)
+{
+    if (!data)
+        return kIOReturnBadArgument;
+
+    IOLog("itlwm: AirportItlwmSkywalkInterface::setVIRTUAL_IF_CREATE role=%u, bsd_name=%s, mac=%s, unk1=%u\n",
+          data->role, data->bsd_name, ether_sprintf(data->mac), data->unk1);
+
+    if (data->role == APPLE80211_VIF_AWDL || data->role == 6 ||
+        strncmp((const char *)data->bsd_name, "awdl", 4) == 0) {
+        if (instance && instance->fAWDLInterface != nullptr) {
+            IOLog("itlwm: AirportItlwmSkywalkInterface::setVIRTUAL_IF_CREATE awdl interface already exists!\n");
+            strlcpy((char *)data->bsd_name, "awdl0", sizeof(data->bsd_name));
+            return kIOReturnSuccess;
+        }
+
+        struct ether_addr addr;
+        bool is_zero = true;
+        for (int i = 0; i < 6; i++) {
+            if (data->mac[i] != 0) is_zero = false;
+        }
+        if (!is_zero) {
+            memcpy(addr.octet, data->mac, 6);
+        } else if (instance) {
+            instance->getHardwareAddress((IOEthernetAddress *)&addr);
+            addr.octet[0] |= 0x02; // locally administered
+        }
+
+        IO80211VirtualInterface *vif = nullptr;
+        bool created = false;
+        if (instance && instance->attachVirtualInterface(&vif, &addr, 6, false) && vif) {
+            IOLog("itlwm: AirportItlwmSkywalkInterface::setVIRTUAL_IF_CREATE attachVirtualInterface succeeded: vif=%p\n", vif);
+            created = true;
+        } else {
+            IOLog("itlwm: AirportItlwmSkywalkInterface::setVIRTUAL_IF_CREATE fallback manual creation...\n");
+            if (instance) {
+                vif = instance->createVirtualInterface(&addr, 6);
+            }
+            if (!vif) {
+                IOLog("itlwm: AirportItlwmSkywalkInterface::setVIRTUAL_IF_CREATE failed to create IO80211VirtualInterface\n");
+                return kIOReturnNoMemory;
+            }
+
+            if (!IO80211VirtualInterface_attach(vif, instance)) {
+                IOLog("itlwm: AirportItlwmSkywalkInterface::setVIRTUAL_IF_CREATE failed to attach AWDL interface to controller\n");
+                vif->release();
+                return kIOReturnError;
+            }
+            created = true;
+        }
+
+        if (created && vif && instance) {
+            if (!IO80211VirtualInterface_start(vif, instance)) {
+                IOLog("itlwm: AirportItlwmSkywalkInterface::setVIRTUAL_IF_CREATE vif->start returned false\n");
+            } else {
+                IOLog("itlwm: AirportItlwmSkywalkInterface::setVIRTUAL_IF_CREATE vif->start succeeded\n");
+            }
+
+            // Verify peerManager in vif->ExpansionData (offset 0x120) -> 0x28
+            void **vif_exp = *(void ***)((uintptr_t)vif + 0x120);
+            void **ctrl_exp = *(void ***)((uintptr_t)instance + 0x120);
+
+            if (vif_exp && vif_exp[0x28 / 8] == nullptr) {
+                IOLog("itlwm: peerManager is NULL after start, calling createPeerManager explicitly...\n");
+                void *pm = IO80211VirtualInterface_createPeerManager(vif);
+                vif_exp[0x28 / 8] = pm;
+                IOLog("itlwm: explicit createPeerManager returned %p\n", pm);
+            }
+
+            void *pm = vif_exp ? vif_exp[0x28 / 8] : nullptr;
+            void *awdl_in_ctrl = ctrl_exp ? ctrl_exp[0x190 / 8] : nullptr;
+            IOLog("itlwm: AWDL init check: vif=%p, ctrl->awdl=%p, vif->peerManager=%p\n",
+                  vif, awdl_in_ctrl, pm);
+
+            // CRITICAL PANIC SHIELD:
+            // IO80211Controller::joinDone calls vif->peerManager->joinDone() without null-checking peerManager.
+            // If peerManager is NULL, clearing ctrl->awdlInterface prevents the kernel panic!
+            if (!pm && ctrl_exp) {
+                IOLog("itlwm: WARNING: peerManager is NULL! Clearing ctrl->awdlInterface to prevent panic!\n");
+                ctrl_exp[0x190 / 8] = nullptr;
+            }
+
+            vif->registerService();
+            instance->fAWDLInterface = vif;
+            strlcpy((char *)data->bsd_name, "awdl0", sizeof(data->bsd_name));
+            IOLog("itlwm: AirportItlwmSkywalkInterface::setVIRTUAL_IF_CREATE successfully created and registered awdl0 interface: %s\n", data->bsd_name);
+            return kIOReturnSuccess;
+        }
+
+        return kIOReturnError;
+    }
+
+    IOLog("itlwm: AirportItlwmSkywalkInterface::setVIRTUAL_IF_CREATE unhandled virtual interface role type: %u\n", data->role);
+    return kIOReturnUnsupported;
+}
+

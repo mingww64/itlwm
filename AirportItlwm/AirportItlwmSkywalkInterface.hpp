@@ -15,6 +15,24 @@
 
 #include <Airport/Apple80211.h>
 
+class IO80211VirtualInterface;
+extern void *IO80211VirtualInterface_operator_new(size_t size) __asm__("__ZN23IO80211VirtualInterfacenwEm");
+extern void IO80211VirtualInterface_ctor(void *self, const void *metaClass) __asm__("__ZN23IO80211VirtualInterfaceC2EPK11OSMetaClass");
+extern bool IO80211VirtualInterface_init(IO80211VirtualInterface *self,
+                                        IO80211Controller *controller,
+                                        struct ether_addr *addr,
+                                        uint32_t role,
+                                        const char *name)
+    __asm__("__ZN23IO80211VirtualInterface4initEP17IO80211ControllerP10ether_addrjPKc");
+extern bool IO80211VirtualInterface_attach(IO80211VirtualInterface *self, IOService *provider)
+    __asm__("__ZN23IO80211VirtualInterface6attachEP9IOService");
+extern bool IO80211VirtualInterface_start(IO80211VirtualInterface *self, IOService *provider)
+    __asm__("__ZN23IO80211VirtualInterface5startEP9IOService");
+extern void *IO80211VirtualInterface_createPeerManager(IO80211VirtualInterface *self)
+    __asm__("__ZN23IO80211VirtualInterface17createPeerManagerEv");
+extern void IO80211Controller_setAwdlInterface(IO80211Controller *self, IO80211VirtualInterface *vif)
+    __asm__("__ZN17IO80211Controller16setAwdlInterfaceEP23IO80211VirtualInterface");
+
 #ifdef AIRPORT_WCL
 #define AIRPORT_SKYWALK_OVERRIDE
 #else
@@ -301,7 +319,7 @@ public:
     virtual IOReturn setIE(apple80211_ie_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setWOW_TEST(apple80211_wow_test_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setSCANCACHE_CLEAR(void *) AIRPORT_SKYWALK_OVERRIDE;
-    virtual IOReturn setVIRTUAL_IF_CREATE(apple80211_virt_if_create_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
+    virtual IOReturn setVIRTUAL_IF_CREATE(apple80211_virt_if_create_data *) AIRPORT_SKYWALK_OVERRIDE;
     virtual IOReturn setBT_COEX_FLAGS(apple80211_state_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setROAM(apple80211_sta_roam_data *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }
     virtual IOReturn setHT_CAPABILITY(apple80211_ht_capability *) AIRPORT_SKYWALK_OVERRIDE { return kIOReturnUnsupported; }

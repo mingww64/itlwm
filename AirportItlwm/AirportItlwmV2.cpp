@@ -7,6 +7,10 @@
 //
 
 #include "AirportItlwmV2.hpp"
+struct apple80211_pmk_cache_data;
+struct packet_info_tx;
+#define _IO80211INTERFACE_H
+#include "IO80211VirtualInterface.h"
 #include <sys/_netstat.h>
 #include <crypto/sha1.h>
 #include <net80211/ieee80211_priv.h>
@@ -670,6 +674,9 @@ setLinkStateGated(OSObject *target, void *arg0, void *arg1, void *arg2, void *ar
     AirportItlwm *that = OSDynamicCast(AirportItlwm, target);
 #ifdef AIRPORT_WCL
     that->bsdInterface->setLinkState((IO80211LinkState)(uint64_t)arg0);
+    if (that->fAWDLInterface) {
+        that->fAWDLInterface->setLinkState((IO80211LinkState)(uint64_t)arg0, (unsigned int)(uint64_t)arg1);
+    }
     static_cast<AirportItlwmSkywalkInterface *>(that->fNetIf)->handleWCLLink(
         (IO80211LinkState)(uint64_t)arg0 == kIO80211NetworkLinkUp);
     return kIOReturnSuccess;
@@ -987,14 +994,20 @@ getCARD_CAPABILITIES(OSObject *object,
     cd->capabilities[0] = (caps & IEEE80211_C_RSN) ?
         (1 << APPLE80211_CAP_AES_CCM) | (1 << APPLE80211_CAP_TKIP) : 0;
     cd->capabilities[1] &= ~(1 << (APPLE80211_CAP_WPA1 - 8));
-    cd->capabilities[5] = 0x40; // Scan completion events.
     cd->capabilities[2] = (1 << (APPLE80211_CAP_WME - 16)) |
         (1 << (APPLE80211_CAP_SHORT_GI_40MHZ - 16)) |
         (1 << (APPLE80211_CAP_SHORT_GI_20MHZ - 16));
+    cd->capabilities[3] = 0x2B;
+    cd->capabilities[4] = 0xAD;
+    cd->capabilities[5] = 0x40; // Scan completion events.
+    cd->capabilities[5] |= 1; // Bit 0: NAN capability
+    cd->capabilities[6] = 0x8C;
+    cd->capabilities[7] = 0x84; // Apple Watch unlock / AWDL WOW
     // Tahoe WCLDeviceConfiguration::isHeSupported reads byte 17, bit 7.
     // WCL uses this capability together with the BSS HE IE for PHY reporting.
     if (caps & IEEE80211_C_HE)
         cd->capabilities[17] |= 0x80;
+    IOLog("itlwm: getCARD_CAPABILITIES called, cap[0]=0x%02x, cap[4]=0x%02x\n", cd->capabilities[0], cd->capabilities[4]);
 #else
     cd->capabilities[2] = 0xFF; // BURST, WME, SHORT_GI_40MHZ, SHORT_GI_20MHZ, WOW, TSN, ?, ?
     cd->capabilities[3] = 0x2B;
@@ -1386,3 +1399,33 @@ void AirportItlwm::setPowerStateOn()
     pmPowerState = kPowerStateOn;
     pmPolicyMaker->acknowledgeSetPowerState();
 }
+
+IO80211VirtualInterface *AirportItlwm::createVirtualInterface(ether_addr *addr, unsigned int role)
+{
+    struct ether_addr local_addr;
+    if (!addr) {
+        getHardwareAddress((IOEthernetAddress *)&local_addr);
+        local_addr.octet[0] |= 0x02;
+        addr = &local_addr;
+    }
+    IOLog("itlwm: AirportItlwm::createVirtualInterface addr=%s role=%u\n", ether_sprintf(addr->octet), role);
+
+    void *mem = IO80211VirtualInterface_operator_new(0x130);
+    if (!mem) {
+        IOLog("itlwm: AirportItlwm::createVirtualInterface failed to alloc IO80211VirtualInterface\n");
+        return nullptr;
+    }
+    IO80211VirtualInterface_ctor(mem, IO80211VirtualInterface::metaClass);
+    IO80211VirtualInterface *vif = (IO80211VirtualInterface *)mem;
+
+    uint32_t actual_role = (role == APPLE80211_VIF_AWDL || role == 6) ? 6 : role;
+    const char *name = (actual_role == 6) ? "awdl" : (actual_role == 7 ? "ap" : "p2p");
+    if (!IO80211VirtualInterface_init(vif, this, addr, actual_role, name)) {
+        IOLog("itlwm: AirportItlwm::createVirtualInterface vif->init failed\n");
+        vif->release();
+        return nullptr;
+    }
+    IOLog("itlwm: AirportItlwm::createVirtualInterface succeeded: vif=%p\n", vif);
+    return vif;
+}
+

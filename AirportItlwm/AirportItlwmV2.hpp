@@ -223,6 +223,7 @@ public:
     FUNC_IOCTL_GET(DRIVER_VERSION, apple80211_version_data)
     FUNC_IOCTL_GET(HARDWARE_VERSION, apple80211_version_data)
     FUNC_IOCTL(COUNTRY_CODE, apple80211_country_code_data)
+    virtual IO80211VirtualInterface *createVirtualInterface(ether_addr *addr, unsigned int role) override;
     
 public:
     IOInterruptEventSource* fInterrupt;
@@ -261,6 +262,7 @@ public:
     bool magicPacketSupported;
     
     //AWDL
+    IO80211VirtualInterface *fAWDLInterface;
     uint8_t *syncFrameTemplate;
     uint32_t syncFrameTemplateLength;
     uint8_t awdlBSSID[6];
